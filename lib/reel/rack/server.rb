@@ -45,24 +45,26 @@ module Reel
 
         status, headers, body = app.call ::Rack::MockRequest.env_for(request.url, options)
 
-        if body.respond_to? :each
-          # If Content-Length was specified we can send the response all at once
-          if headers.keys.detect { |h| h =~ CONTENT_LENGTH_HEADER }
-            # Can't use collect here because Rack::BodyProxy/Rack::Lint isn't a real Enumerable
-            full_body = ''
-            body.each { |b| full_body << b }
-            request.respond status_symbol(status), headers, full_body
+        begin
+          if body.respond_to? :each
+            # If Content-Length was specified we can send the response all at once
+            if headers.keys.detect { |h| h =~ CONTENT_LENGTH_HEADER }
+              # Can't use collect here because Rack::BodyProxy/Rack::Lint isn't a real Enumerable
+              full_body = ''
+              body.each { |b| full_body << b }
+              request.respond status_symbol(status), headers, full_body
+            else
+              request.respond status_symbol(status), headers.merge(:transfer_encoding => :chunked)
+              body.each { |chunk| request << chunk }
+              request.finish_response
+            end
           else
-            request.respond status_symbol(status), headers.merge(:transfer_encoding => :chunked)
-            body.each { |chunk| request << chunk }
-            request.finish_response
+            Logger.error("don't know how to render: #{body.inspect}")
+            request.respond :internal_server_error, "An error occurred processing your request"
           end
-        else
-          Logger.error("don't know how to render: #{body.inspect}")
-          request.respond :internal_server_error, "An error occurred processing your request"
+        ensure
+          body.close if body.respond_to? :close
         end
-
-        body.close if body.respond_to? :close
       end
 
       # Those headers must not start with 'HTTP_'.
